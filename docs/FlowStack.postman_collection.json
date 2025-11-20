@@ -1,0 +1,246 @@
+{
+  "info": {
+    "name": "FlowStack Domain Workflows",
+    "description": "Sample workflow definitions (banking, reconciliation, coding, risk).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "workflowId",
+      "value": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "key": "runId",
+      "value": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Create Banking Workflow",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"banking-origination\",\n  \"description\": \"Loan intake, credit API, Ollama insight, email\",\n  \"nodes\": [\n    {\"key\": \"loan-input\", \"type\": \"INPUT\", \"config\": {\"defaults\": {\"customerId\": \"C-9001\", \"loanAmount\": 45000, \"currency\": \"USD\", \"priority\": \"high\"}}},\n    {\"key\": \"credit-api\", \"type\": \"HTTP\", \"config\": {\"method\": \"POST\", \"url\": \"https://credit.example.com/check/{{customerId}}\", \"headers\": {\"Authorization\": \"Bearer {{creditToken}}\"}, \"body\": \"{\\\"amount\\\": {{loanAmount}}, \\\"currency\\\": \\\"{{currency}}\\\"}\"}},\n    {\"key\": \"js-score\", \"type\": \"SCRIPT_JS\", \"config\": {\"script\": \"const resp = JSON.parse(context[\\\\\"credit-api::body\\\\\"] || '{}');\\nreturn { bureauScore: resp.score || 700 };\"}},\n    {\"key\": \"ollama-summary\", \"type\": \"OLLAMA\", \"config\": {\"prompt\": \"Summarize credit result for {{customerId}}. Score {{js-score::bureauScore}}. Loan {{loanAmount}} {{currency}}.\"}},\n    {\"key\": \"email-ops\", \"type\": \"EMAIL\", \"config\": {\"to\": [\"lending-ops@example.com\"], \"subject\": \"Loan workflow for {{customerId}}\", \"body\": \"Summary: {{ollama-summary::response}}\"}}\n  ],\n  \"edges\": [\n    {\"sourceKey\": \"loan-input\", \"targetKey\": \"credit-api\"},\n    {\"sourceKey\": \"credit-api\", \"targetKey\": \"js-score\"},\n    {\"sourceKey\": \"js-score\", \"targetKey\": \"ollama-summary\"},\n    {\"sourceKey\": \"ollama-summary\", \"targetKey\": \"email-ops\"}\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/workflows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "workflows"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Reconciliation Workflow",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"recon-flow\",\n  \"description\": \"Fetch ledger/payments, reconcile, output mismatches\",\n  \"nodes\": [\n    {\"key\": \"recon-input\", \"type\": \"INPUT\", \"config\": {\"defaults\": {\"accountId\": \"AC-1001\"}}},\n    {\"key\": \"fetch-ledger\", \"type\": \"HTTP\", \"config\": {\"method\": \"GET\", \"url\": \"https://ledger.example.com/accounts/{{accountId}}\"}},\n    {\"key\": \"fetch-payments\", \"type\": \"HTTP\", \"config\": {\"method\": \"GET\", \"url\": \"https://payments.example.com/accounts/{{accountId}}/transactions\"}},\n    {\"key\": \"py-reconcile\", \"type\": \"SCRIPT_PY\", \"config\": {\"script\": \"import json\\nledger = json.loads(context.get('fetch-ledger::body', '[]'))\\npayments = json.loads(context.get('fetch-payments::body', '[]'))\\nreturn { 'difference': abs(len(ledger) - len(payments)) }\"}},\n    {\"key\": \"ollama-recon\", \"type\": \"OLLAMA\", \"config\": {\"prompt\": \"Explain reconciliation difference count {{py-reconcile::difference}} for account {{accountId}}.\"}},\n    {\"key\": \"output\", \"type\": \"OUTPUT\", \"config\": {\"fields\": [\"accountId\", \"py-reconcile::difference\", \"ollama-recon::response\"]}}\n  ],\n  \"edges\": [\n    {\"sourceKey\": \"recon-input\", \"targetKey\": \"fetch-ledger\"},\n    {\"sourceKey\": \"recon-input\", \"targetKey\": \"fetch-payments\"},\n    {\"sourceKey\": \"fetch-ledger\", \"targetKey\": \"py-reconcile\"},\n    {\"sourceKey\": \"fetch-payments\", \"targetKey\": \"py-reconcile\"},\n    {\"sourceKey\": \"py-reconcile\", \"targetKey\": \"ollama-recon\"},\n    {\"sourceKey\": \"ollama-recon\", \"targetKey\": \"output\"}\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/workflows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "workflows"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Coding Workflow",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"coding-exec-flow\",\n  \"description\": \"Evaluate JS + Python, summarize with Ollama\",\n  \"nodes\": [\n    {\"key\": \"code-input\", \"type\": \"INPUT\"},\n    {\"key\": \"js-eval\", \"type\": \"SCRIPT_JS\", \"config\": {\"script\": \"return { linesOfCode: (context.snippet || '').split('\\\\n').length };\"}},\n    {\"key\": \"py-eval\", \"type\": \"SCRIPT_PY\", \"config\": {\"script\": \"code = context.get('snippet', '')\\nreturn { pythonSummary: f'Snippet length {len(code)} chars' }\"}},\n    {\"key\": \"ollama-code\", \"type\": \"OLLAMA\", \"config\": {\"prompt\": \"Provide insights for code snippet {{snippet}}. LOC {{js-eval::linesOfCode}}.\"}},\n    {\"key\": \"output\", \"type\": \"OUTPUT\", \"config\": {\"fields\": [\"snippet\", \"js-eval::linesOfCode\", \"py-eval::pythonSummary\", \"ollama-code::response\"]}}\n  ],\n  \"edges\": [\n    {\"sourceKey\": \"code-input\", \"targetKey\": \"js-eval\"},\n    {\"sourceKey\": \"code-input\", \"targetKey\": \"py-eval\"},\n    {\"sourceKey\": \"js-eval\", \"targetKey\": \"ollama-code\"},\n    {\"sourceKey\": \"py-eval\", \"targetKey\": \"ollama-code\"},\n    {\"sourceKey\": \"ollama-code\", \"targetKey\": \"output\"}\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/workflows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "workflows"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Risk Workflow",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"risk-monitor-flow\",\n  \"description\": \"Monitor thresholds, log + email when exceeded\",\n  \"nodes\": [\n    {\"key\": \"risk-input\", \"type\": \"INPUT\", \"config\": {\"defaults\": {\"metric\": 82, \"owner\": \"risk-team@example.com\"}}},\n    {\"key\": \"js-threshold\", \"type\": \"SCRIPT_JS\", \"config\": {\"script\": \"const value = Number(context.metric || 0);return { exceeded: value > 75, value };\"}},\n    {\"key\": \"ollama-risk\", \"type\": \"OLLAMA\", \"config\": {\"prompt\": \"Create a brief alert for metric value {{js-threshold::value}} (flag {{js-threshold::exceeded}}).\"}},\n    {\"key\": \"email-alert\", \"type\": \"EMAIL\", \"config\": {\"to\": \"{{owner}}\", \"subject\": \"Risk metric alert\", \"body\": \"{{ollama-risk::response}}\"}}\n  ],\n  \"edges\": [\n    {\"sourceKey\": \"risk-input\", \"targetKey\": \"js-threshold\"},\n    {\"sourceKey\": \"js-threshold\", \"targetKey\": \"ollama-risk\"},\n    {\"sourceKey\": \"ollama-risk\", \"targetKey\": \"email-alert\"}\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/workflows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "workflows"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create India Tax Workflow",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"india-tax-calculator\",\n  \"description\": \"India tax calculator with eligibility check and old/new regime support\",\n  \"nodes\": [\n    {\"key\": \"tax-input\", \"type\": \"INPUT\", \"displayName\": \"Tax Input\", \"config\": {\"defaults\": {\"taxpayer\": \"Salaried Professional\", \"financialYear\": \"FY24-25\", \"grossIncome\": 1850000, \"regime\": \"old\", \"deductions\": {\"section80C\": 150000, \"section80D\": 35000, \"hra\": 240000}}}},\n    {\"key\": \"check-eligibility\", \"type\": \"IF_ELSE\", \"displayName\": \"Check Tax Eligibility\", \"config\": {\"condition\": \"{{grossIncome}} > 0\"}},\n    {\"key\": \"check-regime\", \"type\": \"IF_ELSE\", \"displayName\": \"Check Tax Regime\", \"config\": {\"condition\": \"{{regime}} == \\\"old\\\"\"}},\n    {\"key\": \"calc-old-tax\", \"type\": \"SCRIPT_JS\", \"displayName\": \"Calculate Old Regime Tax\", \"config\": {\"script\": \"const income = Number(context.grossIncome || 0);\\nconst deductionSum = Object.values(context.deductions || {}).reduce((sum, val) => sum + Number(val || 0), 0);\\nconst taxable = Math.max(income - deductionSum, 0);\\nconst slabs = [\\n  { limit: 250000, rate: 0 },\\n  { limit: 500000, rate: 0.05 },\\n  { limit: 1000000, rate: 0.2 },\\n  { limit: Infinity, rate: 0.3 }\\n];\\nlet remaining = taxable;\\nlet previousLimit = 0;\\nlet tax = 0;\\nfor (const slab of slabs) {\\n  const band = Math.min(remaining, slab.limit - previousLimit);\\n  if (band > 0) {\\n    tax += band * slab.rate;\\n    remaining -= band;\\n  }\\n  previousLimit = slab.limit;\\n  if (remaining <= 0) break;\\n}\\nconst cess = tax * 0.04;\\nconst totalTax = tax + cess;\\nreturn { \\n  regime: \\\"old\\\",\\n  taxableIncome: taxable, \\n  baseTax: Number(tax.toFixed(2)), \\n  cess: Number(cess.toFixed(2)), \\n  totalTax: Number(totalTax.toFixed(2)),\\n  deductions: deductionSum\\n};\"}},\n    {\"key\": \"calc-new-tax\", \"type\": \"SCRIPT_JS\", \"displayName\": \"Calculate New Regime Tax\", \"config\": {\"script\": \"const income = Number(context.grossIncome || 0);\\nconst taxable = income;\\nconst slabs = [\\n  { limit: 300000, rate: 0 },\\n  { limit: 700000, rate: 0.05 },\\n  { limit: 1000000, rate: 0.1 },\\n  { limit: 1200000, rate: 0.15 },\\n  { limit: 1500000, rate: 0.2 },\\n  { limit: Infinity, rate: 0.3 }\\n];\\nlet remaining = taxable;\\nlet previousLimit = 0;\\nlet tax = 0;\\nfor (const slab of slabs) {\\n  const band = Math.min(remaining, slab.limit - previousLimit);\\n  if (band > 0) {\\n    tax += band * slab.rate;\\n    remaining -= band;\\n  }\\n  previousLimit = slab.limit;\\n  if (remaining <= 0) break;\\n}\\nconst cess = tax * 0.04;\\nconst totalTax = tax + cess;\\nreturn { \\n  regime: \\\"new\\\",\\n  taxableIncome: taxable, \\n  baseTax: Number(tax.toFixed(2)), \\n  cess: Number(cess.toFixed(2)), \\n  totalTax: Number(totalTax.toFixed(2)),\\n  deductions: 0\\n};\"}},\n    {\"key\": \"not-eligible-output\", \"type\": \"OUTPUT\", \"displayName\": \"Not Eligible Output\", \"config\": {\"fields\": [\"taxpayer\", \"grossIncome\", \"message\"]}},\n    {\"key\": \"tax-summary\", \"type\": \"OLLAMA\", \"displayName\": \"Generate Tax Summary\", \"config\": {\"prompt\": \"Write a clear tax summary for {{taxpayer}} ({{financialYear}}). Gross Income: ₹{{grossIncome}}. Regime: {{calc-old-tax::regime}}{{calc-new-tax::regime}}. Taxable Income: ₹{{calc-old-tax::taxableIncome}}{{calc-new-tax::taxableIncome}}. Deductions: ₹{{calc-old-tax::deductions}}{{calc-new-tax::deductions}}. Base Tax: ₹{{calc-old-tax::baseTax}}{{calc-new-tax::baseTax}}. Cess: ₹{{calc-old-tax::cess}}{{calc-new-tax::cess}}. Total Tax: ₹{{calc-old-tax::totalTax}}{{calc-new-tax::totalTax}}.\"}},\n    {\"key\": \"email-tax-summary\", \"type\": \"EMAIL\", \"displayName\": \"Email Tax Summary\", \"config\": {\"to\": \"ankush.wairagade@paytm.com\", \"subject\": \"Tax Calculation Summary for {{taxpayer}} - {{financialYear}}\", \"body\": \"{{tax-summary::response}}\"}}\n  ],\n  \"edges\": [\n    {\"sourceKey\": \"tax-input\", \"targetKey\": \"check-eligibility\"},\n    {\"sourceKey\": \"check-eligibility\", \"targetKey\": \"check-regime\", \"conditionExpression\": \"true\"},\n    {\"sourceKey\": \"check-eligibility\", \"targetKey\": \"not-eligible-output\", \"conditionExpression\": \"false\"},\n    {\"sourceKey\": \"check-regime\", \"targetKey\": \"calc-old-tax\", \"conditionExpression\": \"true\"},\n    {\"sourceKey\": \"check-regime\", \"targetKey\": \"calc-new-tax\", \"conditionExpression\": \"false\"},\n    {\"sourceKey\": \"calc-old-tax\", \"targetKey\": \"tax-summary\"},\n    {\"sourceKey\": \"calc-new-tax\", \"targetKey\": \"tax-summary\"},\n    {\"sourceKey\": \"tax-summary\", \"targetKey\": \"email-tax-summary\"}\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/workflows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "workflows"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Workflows",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/workflows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "workflows"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Workflow",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/workflows/{{workflowId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "workflows",
+            "{{workflowId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Start Workflow Run",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"input\": {\n    \"customerId\": \"123\",\n    \"message\": \"Need onboarding summary\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/runs/{{workflowId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs",
+            "{{workflowId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Runs",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/runs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Run",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/runs/{{runId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs",
+            "{{runId}}"
+          ]
+        }
+      }
+    }
+  ]
+}

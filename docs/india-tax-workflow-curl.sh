@@ -1,0 +1,139 @@
+#!/bin/bash
+
+# Create India Tax Workflow with IF/ELSE conditions
+# This workflow handles:
+# 1. Tax eligibility check (if income > 0)
+# 2. Old vs New tax regime selection
+# 3. Tax calculation based on selected regime
+
+curl -X POST http://localhost:8080/api/workflows \
+  -H "Content-Type: application/json" \
+  -d '{
+  "name": "india-tax-calculator",
+  "description": "India tax calculator with eligibility check and old/new regime support",
+  "nodes": [
+    {
+      "key": "tax-input",
+      "type": "INPUT",
+      "displayName": "Tax Input",
+      "config": {
+        "defaults": {
+          "taxpayer": "Salaried Professional",
+          "financialYear": "FY24-25",
+          "grossIncome": 1850000,
+          "regime": "old",
+          "deductions": {
+            "section80C": 150000,
+            "section80D": 35000,
+            "hra": 240000
+          }
+        }
+      }
+    },
+    {
+      "key": "check-eligibility",
+      "type": "IF_ELSE",
+      "displayName": "Check Tax Eligibility",
+      "config": {
+        "condition": "{{grossIncome}} > 0"
+      }
+    },
+    {
+      "key": "check-regime",
+      "type": "IF_ELSE",
+      "displayName": "Check Tax Regime",
+      "config": {
+        "condition": "{{regime}} == \"old\""
+      }
+    },
+    {
+      "key": "calc-old-tax",
+      "type": "SCRIPT_JS",
+      "displayName": "Calculate Old Regime Tax",
+      "config": {
+        "script": "const income = Number(context.grossIncome || 0);\nconst deductionSum = Object.values(context.deductions || {}).reduce((sum, val) => sum + Number(val || 0), 0);\nconst taxable = Math.max(income - deductionSum, 0);\nconst slabs = [\n  { limit: 250000, rate: 0 },\n  { limit: 500000, rate: 0.05 },\n  { limit: 1000000, rate: 0.2 },\n  { limit: Infinity, rate: 0.3 }\n];\nlet remaining = taxable;\nlet previousLimit = 0;\nlet tax = 0;\nfor (const slab of slabs) {\n  const band = Math.min(remaining, slab.limit - previousLimit);\n  if (band > 0) {\n    tax += band * slab.rate;\n    remaining -= band;\n  }\n  previousLimit = slab.limit;\n  if (remaining <= 0) break;\n}\nconst cess = tax * 0.04;\nconst totalTax = tax + cess;\nreturn { \n  regime: \"old\",\n  taxableIncome: taxable, \n  baseTax: Number(tax.toFixed(2)), \n  cess: Number(cess.toFixed(2)), \n  totalTax: Number(totalTax.toFixed(2)),\n  deductions: deductionSum\n};"
+      }
+    },
+    {
+      "key": "calc-new-tax",
+      "type": "SCRIPT_JS",
+      "displayName": "Calculate New Regime Tax",
+      "config": {
+        "script": "const income = Number(context.grossIncome || 0);\nconst taxable = income; // New regime has no deductions\nconst slabs = [\n  { limit: 300000, rate: 0 },\n  { limit: 700000, rate: 0.05 },\n  { limit: 1000000, rate: 0.1 },\n  { limit: 1200000, rate: 0.15 },\n  { limit: 1500000, rate: 0.2 },\n  { limit: Infinity, rate: 0.3 }\n];\nlet remaining = taxable;\nlet previousLimit = 0;\nlet tax = 0;\nfor (const slab of slabs) {\n  const band = Math.min(remaining, slab.limit - previousLimit);\n  if (band > 0) {\n    tax += band * slab.rate;\n    remaining -= band;\n  }\n  previousLimit = slab.limit;\n  if (remaining <= 0) break;\n}\nconst cess = tax * 0.04;\nconst totalTax = tax + cess;\nreturn { \n  regime: \"new\",\n  taxableIncome: taxable, \n  baseTax: Number(tax.toFixed(2)), \n  cess: Number(cess.toFixed(2)), \n  totalTax: Number(totalTax.toFixed(2)),\n  deductions: 0\n};"
+      }
+    },
+    {
+      "key": "not-eligible-output",
+      "type": "OUTPUT",
+      "displayName": "Not Eligible Output",
+      "config": {
+        "fields": ["taxpayer", "grossIncome", "message"]
+      }
+    },
+    {
+      "key": "tax-summary",
+      "type": "OLLAMA",
+      "displayName": "Generate Tax Summary",
+      "config": {
+        "prompt": "Write a clear tax summary for {{taxpayer}} ({{financialYear}}). Gross Income: ₹{{grossIncome}}. Regime: {{calc-old-tax::regime}}{{calc-new-tax::regime}}. Taxable Income: ₹{{calc-old-tax::taxableIncome}}{{calc-new-tax::taxableIncome}}. Deductions: ₹{{calc-old-tax::deductions}}{{calc-new-tax::deductions}}. Base Tax: ₹{{calc-old-tax::baseTax}}{{calc-new-tax::baseTax}}. Cess: ₹{{calc-old-tax::cess}}{{calc-new-tax::cess}}. Total Tax: ₹{{calc-old-tax::totalTax}}{{calc-new-tax::totalTax}}."
+      }
+    },
+    {
+      "key": "email-tax-summary",
+      "type": "EMAIL",
+      "displayName": "Email Tax Summary",
+      "config": {
+        "to": "ankush.wairagade@paytm.com",
+        "subject": "Tax Calculation Summary for {{taxpayer}} - {{financialYear}}",
+        "body": "{{tax-summary::response}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "sourceKey": "tax-input",
+      "targetKey": "check-eligibility"
+    },
+    {
+      "sourceKey": "check-eligibility",
+      "targetKey": "check-regime",
+      "conditionExpression": "true"
+    },
+    {
+      "sourceKey": "check-eligibility",
+      "targetKey": "not-eligible-output",
+      "conditionExpression": "false"
+    },
+    {
+      "sourceKey": "check-regime",
+      "targetKey": "calc-old-tax",
+      "conditionExpression": "true"
+    },
+    {
+      "sourceKey": "check-regime",
+      "targetKey": "calc-new-tax",
+      "conditionExpression": "false"
+    },
+    {
+      "sourceKey": "calc-old-tax",
+      "targetKey": "tax-summary"
+    },
+    {
+      "sourceKey": "calc-new-tax",
+      "targetKey": "tax-summary"
+    },
+    {
+      "sourceKey": "tax-summary",
+      "targetKey": "email-tax-summary"
+    }
+  ]
+}'
+
+echo ""
+echo "Workflow created successfully!"
+echo ""
+echo "To run this workflow, use:"
+echo "curl -X POST http://localhost:8080/api/runs/{workflowId} \\"
+echo "  -H \"Content-Type: application/json\" \\"
+echo "  -d '{\"input\": {\"taxpayer\": \"John Doe\", \"grossIncome\": 1850000, \"regime\": \"old\", \"deductions\": {\"section80C\": 150000, \"section80D\": 35000, \"hra\": 240000}}}'"
+
