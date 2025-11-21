@@ -47,6 +47,7 @@ com/ankush/workflowEngine/execution/WorkflowExecutor.class
 com/ankush/workflowEngine/domain/WorkflowRun.class
 com/ankush/workflowEngine/registry/executors/OllamaNodeExecutor.class
 com/ankush/workflowEngine/config/CorsConfig.class
+com/ankush/workflowEngine/config/FlowStackConfig$1.class
 com/ankush/workflowEngine/dto/WorkflowDefinitionRequest.class
 com/ankush/workflowEngine/mapper/WorkflowMapper.class
 com/ankush/workflowEngine/repository/WorkflowNodeRepository.class

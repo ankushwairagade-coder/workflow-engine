@@ -3,6 +3,7 @@ package com.ankush.workflowEngine.service;
 import com.ankush.workflowEngine.domain.WorkflowDefinition;
 import com.ankush.workflowEngine.domain.WorkflowEdge;
 import com.ankush.workflowEngine.domain.WorkflowNode;
+import com.ankush.workflowEngine.domain.WorkflowNodeRun;
 import com.ankush.workflowEngine.domain.WorkflowRun;
 import com.ankush.workflowEngine.dto.WorkflowDefinitionRequest;
 import com.ankush.workflowEngine.dto.WorkflowDefinitionResponse;
@@ -13,6 +14,7 @@ import com.ankush.workflowEngine.mapper.WorkflowMapper;
 import com.ankush.workflowEngine.repository.WorkflowDefinitionRepository;
 import com.ankush.workflowEngine.repository.WorkflowEdgeRepository;
 import com.ankush.workflowEngine.repository.WorkflowNodeRepository;
+import com.ankush.workflowEngine.repository.WorkflowNodeRunRepository;
 import com.ankush.workflowEngine.repository.WorkflowRunRepository;
 import com.ankush.workflowEngine.support.ErrorMessageFormatter;
 import jakarta.persistence.EntityNotFoundException;
@@ -35,6 +37,7 @@ public class WorkflowDefinitionService {
     private final WorkflowNodeRepository nodeRepository;
     private final WorkflowEdgeRepository edgeRepository;
     private final WorkflowRunRepository runRepository;
+    private final WorkflowNodeRunRepository nodeRunRepository;
     private final WorkflowMapper mapper;
     private final WorkflowValidationService validationService;
 
@@ -43,12 +46,14 @@ public class WorkflowDefinitionService {
             WorkflowNodeRepository nodeRepository,
             WorkflowEdgeRepository edgeRepository,
             WorkflowRunRepository runRepository,
+            WorkflowNodeRunRepository nodeRunRepository,
             WorkflowMapper mapper,
             WorkflowValidationService validationService) {
         this.definitionRepository = definitionRepository;
         this.nodeRepository = nodeRepository;
         this.edgeRepository = edgeRepository;
         this.runRepository = runRepository;
+        this.nodeRunRepository = nodeRunRepository;
         this.mapper = mapper;
         this.validationService = validationService;
     }
@@ -208,8 +213,17 @@ public class WorkflowDefinitionService {
             // Fetch to ensure it exists (will throw if not found)
             WorkflowDefinition definition = fetchEntity(id);
             
-            // Delete all associated workflow runs first (to avoid foreign key constraint violation)
+            // Delete all associated workflow runs and their node runs (to avoid foreign key constraint violations)
             List<WorkflowRun> runs = runRepository.findByWorkflowDefinitionId(id);
+            for (WorkflowRun run : runs) {
+                // Delete all node runs for this workflow run first
+                List<WorkflowNodeRun> nodeRuns = nodeRunRepository.findByWorkflowRunId(run.getId());
+                if (!nodeRuns.isEmpty()) {
+                    nodeRunRepository.deleteAll(nodeRuns);
+                }
+            }
+            
+            // Now delete all workflow runs
             if (!runs.isEmpty()) {
                 runRepository.deleteAll(runs);
             }
