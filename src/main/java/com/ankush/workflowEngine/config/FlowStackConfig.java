@@ -32,8 +32,11 @@ public class FlowStackConfig {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(4);
         executor.setMaxPoolSize(16);
-        executor.setQueueCapacity(100);
+        executor.setQueueCapacity(200);
         executor.setThreadNamePrefix("flowstack-exec-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(60);
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;
     }

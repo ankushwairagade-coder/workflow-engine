@@ -16,9 +16,12 @@ public interface WorkflowDefinitionRepository extends JpaRepository<WorkflowDefi
 
     Optional<WorkflowDefinition> findTopByNameOrderByVersionDesc(String name);
 
-    @Query("select distinct w from WorkflowDefinition w left join fetch w.nodes left join fetch w.edges")
+    @Query("select distinct w from WorkflowDefinition w left join fetch w.nodes left join fetch w.edges order by w.updatedAt desc")
     List<WorkflowDefinition> findAllWithNodesAndEdges();
 
     @Query("select distinct w from WorkflowDefinition w left join fetch w.nodes left join fetch w.edges where w.id = :id")
     Optional<WorkflowDefinition> findByIdWithNodesAndEdges(@Param("id") Long id);
+
+    @Query("select distinct w from WorkflowDefinition w left join fetch w.nodes left join fetch w.edges where w.name = :name order by w.version desc")
+    List<WorkflowDefinition> findByNameWithNodesAndEdgesOrderByVersionDesc(@Param("name") String name);
 }

@@ -67,7 +67,8 @@ public class WorkflowRunService {
         try {
             MDC.put("runId", String.valueOf(runId));
             Long safeId = Objects.requireNonNull(runId, ErrorMessageFormatter.workflowRunIdRequired());
-            WorkflowRun run = runRepository.findById(safeId)
+            // Use JOIN FETCH to avoid N+1 query when accessing workflowDefinition
+            WorkflowRun run = runRepository.findByIdWithWorkflowDefinition(safeId)
                     .orElseThrow(() -> new EntityNotFoundException(ErrorMessageFormatter.workflowRunNotFound(runId)));
             MDC.put("workflowId", String.valueOf(run.getWorkflowDefinition().getId()));
             return mapper.toResponse(run);
@@ -79,7 +80,9 @@ public class WorkflowRunService {
 
     @Transactional(readOnly = true)
     public List<WorkflowRunResponse> listRuns() {
-        return runRepository.findAll().stream()
+        // Use JOIN FETCH to avoid N+1 queries when accessing workflowDefinition for each run
+        // Consider adding pagination for production: Pageable pageable
+        return runRepository.findAllWithWorkflowDefinition().stream()
                 .map(mapper::toResponse)
                 .toList();
     }
@@ -89,7 +92,8 @@ public class WorkflowRunService {
         try {
             MDC.put("runId", String.valueOf(runId));
             Long safeId = Objects.requireNonNull(runId, ErrorMessageFormatter.workflowRunIdRequired());
-            WorkflowRun run = runRepository.findById(safeId)
+            // Use JOIN FETCH to avoid N+1 query when accessing workflowDefinition
+            WorkflowRun run = runRepository.findByIdWithWorkflowDefinition(safeId)
                     .orElseThrow(() -> new EntityNotFoundException(ErrorMessageFormatter.workflowRunNotFound(runId)));
             MDC.put("workflowId", String.valueOf(run.getWorkflowDefinition().getId()));
             run.setContextData(mapper.writeJson(context));

@@ -83,7 +83,8 @@ public class WorkflowExecutor {
         MDC.put("runId", runId.toString());
         
         try {
-        WorkflowRun run = runRepository.findById(safeId)
+            // Use JOIN FETCH to avoid N+1 query when accessing workflowDefinition
+            WorkflowRun run = runRepository.findByIdWithWorkflowDefinition(safeId)
                     .orElseThrow(() -> new IllegalArgumentException(ErrorMessageFormatter.workflowRunNotFound(runId)));
             
             MDC.put("workflowId", run.getWorkflowDefinition().getId().toString());

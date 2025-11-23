@@ -24,14 +24,19 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class WorkflowDefinitionService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowDefinitionService.class);
 
     private final WorkflowDefinitionRepository definitionRepository;
     private final WorkflowNodeRepository nodeRepository;
@@ -68,15 +73,43 @@ public class WorkflowDefinitionService {
             throw new IllegalArgumentException("Workflow must include at least one node");
         }
 
-        WorkflowDefinition definition = new WorkflowDefinition();
-        definition.setName(request.name());
-        definition.setDescription(request.description());
-        definition.setStatus(WorkflowStatus.DRAFT);
-        definition.setVersion(nextVersion(request.name()));
-        definition.setMetadata(mapper.writeJson(request.metadata()));
-        definition = definitionRepository.save(definition);
+        // Check if a workflow with the same name already exists
+        // If exists, update it instead of creating a new one
+        Optional<WorkflowDefinition> existingWorkflowOpt = definitionRepository
+                .findTopByNameOrderByVersionDesc(request.name());
+        
+        WorkflowDefinition definition;
+        boolean isUpdate = existingWorkflowOpt.isPresent();
+        
+        if (isUpdate) {
+            // Update existing workflow - fetch with nodes and edges
+            definition = fetchEntityWithGraph(existingWorkflowOpt.get().getId());
+            LOGGER.debug("Updating existing workflow: {} (id: {})", request.name(), definition.getId());
+            
+            // Update workflow definition fields
+            definition.setName(request.name());
+            definition.setDescription(request.description());
+            definition.setMetadata(mapper.writeJson(request.metadata()));
+            // Keep existing status and version - don't change them on update
+            
+            // Clear existing nodes and edges (cascade will handle deletion)
+            definition.getNodes().clear();
+            definition.getEdges().clear();
+        } else {
+            // Create new workflow
+            definition = new WorkflowDefinition();
+            definition.setName(request.name());
+            definition.setDescription(request.description());
+            definition.setStatus(WorkflowStatus.DRAFT);
+            definition.setVersion(nextVersion(request.name()));
+            definition.setMetadata(mapper.writeJson(request.metadata()));
+            definition = definitionRepository.save(definition);
+            LOGGER.debug("Creating new workflow: {}", request.name());
+        }
 
+        // Batch create nodes for better performance
         AtomicInteger orderCounter = new AtomicInteger(0);
+        List<WorkflowNode> nodesToSave = new ArrayList<>(nodeRequests.size());
         for (WorkflowNodeRequest nodeRequest : nodeRequests) {
             WorkflowNode node = new WorkflowNode();
             node.setWorkflowDefinition(definition);
@@ -87,29 +120,43 @@ public class WorkflowDefinitionService {
             node.setSortOrder(sortOrder);
             node.setConfig(mapper.writeJson(nodeRequest.config()));
             node.setMetadata(mapper.writeJson(nodeRequest.metadata()));
-            nodeRepository.save(node);
+            nodesToSave.add(node);
             definition.getNodes().add(node);
         }
+        // Batch save all nodes at once
+        nodeRepository.saveAll(nodesToSave);
 
+        // Batch create edges for better performance
         List<WorkflowEdgeRequest> edges = request.edges() == null ? List.of() : request.edges();
-        for (WorkflowEdgeRequest edgeRequest : edges) {
-            WorkflowEdge edge = new WorkflowEdge();
-            edge.setWorkflowDefinition(definition);
-            edge.setSourceKey(edgeRequest.sourceKey());
-            edge.setTargetKey(edgeRequest.targetKey());
-            edge.setConditionExpression(edgeRequest.conditionExpression());
-            edge.setMetadata(mapper.writeJson(edgeRequest.metadata()));
-            edgeRepository.save(edge);
-            definition.getEdges().add(edge);
+        if (!edges.isEmpty()) {
+            List<WorkflowEdge> edgesToSave = new ArrayList<>(edges.size());
+            for (WorkflowEdgeRequest edgeRequest : edges) {
+                WorkflowEdge edge = new WorkflowEdge();
+                edge.setWorkflowDefinition(definition);
+                edge.setSourceKey(edgeRequest.sourceKey());
+                edge.setTargetKey(edgeRequest.targetKey());
+                edge.setConditionExpression(edgeRequest.conditionExpression());
+                edge.setMetadata(mapper.writeJson(edgeRequest.metadata()));
+                edgesToSave.add(edge);
+                definition.getEdges().add(edge);
+            }
+            // Batch save all edges at once
+            edgeRepository.saveAll(edgesToSave);
         }
 
+        // Save the definition to ensure all changes are persisted
+        // (especially important for updates where we cleared nodes/edges)
+        definition = definitionRepository.save(definition);
         definition.getNodes().sort(Comparator.comparingInt(WorkflowNode::getSortOrder));
         return mapper.toResponse(definition);
     }
 
     @Transactional(readOnly = true)
     public List<WorkflowDefinitionResponse> listDefinitions() {
-        return definitionRepository.findAllWithNodesAndEdges().stream()
+        // Use pagination for large datasets - fetch in batches
+        // For now, return all but consider adding pagination parameters
+        List<WorkflowDefinition> definitions = definitionRepository.findAllWithNodesAndEdges();
+        return definitions.stream()
                 .map(mapper::toResponse)
                 .toList();
     }
@@ -118,6 +165,8 @@ public class WorkflowDefinitionService {
     public WorkflowDefinitionResponse getDefinition(Long id) {
         try {
             MDC.put("workflowId", String.valueOf(id));
+            // Note: Not caching DTOs directly due to type deserialization issues with Redis
+            // DTOs are lightweight transformations, so caching provides minimal benefit
             return mapper.toResponse(fetchEntityWithGraph(id));
         } finally {
             MDC.remove("workflowId");
@@ -167,8 +216,9 @@ public class WorkflowDefinitionService {
             definition.getNodes().clear();
             definition.getEdges().clear();
             
-            // Create new nodes
+            // Batch create new nodes for better performance
             AtomicInteger orderCounter = new AtomicInteger(0);
+            List<WorkflowNode> nodesToSave = new ArrayList<>(nodeRequests.size());
             for (WorkflowNodeRequest nodeRequest : nodeRequests) {
                 WorkflowNode node = new WorkflowNode();
                 node.setWorkflowDefinition(definition);
@@ -179,21 +229,28 @@ public class WorkflowDefinitionService {
                 node.setSortOrder(sortOrder);
                 node.setConfig(mapper.writeJson(nodeRequest.config()));
                 node.setMetadata(mapper.writeJson(nodeRequest.metadata()));
-                nodeRepository.save(node);
+                nodesToSave.add(node);
                 definition.getNodes().add(node);
             }
+            // Batch save all nodes at once
+            nodeRepository.saveAll(nodesToSave);
             
-            // Create new edges
+            // Batch create new edges for better performance
             List<WorkflowEdgeRequest> edges = deduplicatedRequest.edges() == null ? List.of() : deduplicatedRequest.edges();
-            for (WorkflowEdgeRequest edgeRequest : edges) {
-                WorkflowEdge edge = new WorkflowEdge();
-                edge.setWorkflowDefinition(definition);
-                edge.setSourceKey(edgeRequest.sourceKey());
-                edge.setTargetKey(edgeRequest.targetKey());
-                edge.setConditionExpression(edgeRequest.conditionExpression());
-                edge.setMetadata(mapper.writeJson(edgeRequest.metadata()));
-                edgeRepository.save(edge);
-                definition.getEdges().add(edge);
+            if (!edges.isEmpty()) {
+                List<WorkflowEdge> edgesToSave = new ArrayList<>(edges.size());
+                for (WorkflowEdgeRequest edgeRequest : edges) {
+                    WorkflowEdge edge = new WorkflowEdge();
+                    edge.setWorkflowDefinition(definition);
+                    edge.setSourceKey(edgeRequest.sourceKey());
+                    edge.setTargetKey(edgeRequest.targetKey());
+                    edge.setConditionExpression(edgeRequest.conditionExpression());
+                    edge.setMetadata(mapper.writeJson(edgeRequest.metadata()));
+                    edgesToSave.add(edge);
+                    definition.getEdges().add(edge);
+                }
+                // Batch save all edges at once
+                edgeRepository.saveAll(edgesToSave);
             }
             
             // Save the updated definition
@@ -213,18 +270,22 @@ public class WorkflowDefinitionService {
             // Fetch to ensure it exists (will throw if not found)
             WorkflowDefinition definition = fetchEntity(id);
             
-            // Delete all associated workflow runs and their node runs (to avoid foreign key constraint violations)
-            List<WorkflowRun> runs = runRepository.findByWorkflowDefinitionId(id);
-            for (WorkflowRun run : runs) {
-                // Delete all node runs for this workflow run first
-                List<WorkflowNodeRun> nodeRuns = nodeRunRepository.findByWorkflowRunId(run.getId());
-                if (!nodeRuns.isEmpty()) {
-                    nodeRunRepository.deleteAll(nodeRuns);
-                }
-            }
-            
-            // Now delete all workflow runs
+            // Batch delete all associated workflow runs and their node runs (to avoid foreign key constraint violations)
+            // Use optimized query to fetch runs with definition to avoid N+1
+            List<WorkflowRun> runs = runRepository.findByWorkflowDefinitionIdWithDefinition(id);
             if (!runs.isEmpty()) {
+                // Collect all run IDs for batch fetching node runs (avoids N+1)
+                List<Long> runIds = runs.stream().map(WorkflowRun::getId).toList();
+                
+                // Batch fetch all node runs in a single query instead of N queries
+                List<WorkflowNodeRun> allNodeRuns = nodeRunRepository.findByWorkflowRunIds(runIds);
+                
+                // Batch delete all node runs
+                if (!allNodeRuns.isEmpty()) {
+                    nodeRunRepository.deleteAll(allNodeRuns);
+                }
+                
+                // Batch delete all workflow runs
                 runRepository.deleteAll(runs);
             }
             
