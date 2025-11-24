@@ -5,7 +5,7 @@
 ### 1. **Hardcoded Credentials in application.properties**
 **Issue**: Email password is hardcoded in `application.properties`
 ```properties
-spring.mail.password=nwcwrpbutkpmlwvt
+spring.mail.password=
 ```
 
 **Fix**: 
